@@ -7,6 +7,9 @@ This repository contains sample code for using the [Bitmovin](https://bitmovin.c
 - **subtitle**  
   Demonstrates how to add and manage subtitles or closed captions.
 
+- **thumbnail/sprite**  
+  Demonstrates how to create thumbnail files and sprite together with encoding.
+
 Prerequisites
 - A Bitmovin API key. Sign up for one at Bitmovin if you don’t have it already.
 - Appropriate language SDKs:
