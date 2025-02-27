@@ -17,7 +17,7 @@ from bitmovin_api_sdk import MessageType, StartLiveEncodingRequest, ManifestGene
 from bitmovin_api_sdk import LiveHlsManifest, LiveDashManifest, AvailabilityStartTimeMode
 from bitmovin_api_sdk import Status
 
-TEST_ITEM = "live-h264-aac-fmp4-hls-dash-role-based"
+TEST_ITEM = "live-rtmp-ingest-h264-vbr-aac-fmp4-hls-dash-s3-role-based"
 
 API_KEY = '<INSERT YOUR API KEY>'
 ORG_ID = '<INSERT YOUR ORG ID>'

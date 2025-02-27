@@ -2,10 +2,10 @@ import time
 from time import sleep
 
 from bitmovin_api_sdk import BitmovinApi, BitmovinError
-from bitmovin_api_sdk import S3Output
+from bitmovin_api_sdk import S3RoleBasedOutput, SrtInput, SrtMode
 from bitmovin_api_sdk import Encoding, CloudRegion
 from bitmovin_api_sdk import EncodingOutput, AclEntry, AclPermission
-from bitmovin_api_sdk import IngestInputStream, StreamSelectionMode, PresetConfiguration
+from bitmovin_api_sdk import PresetConfiguration
 from bitmovin_api_sdk import Stream, StreamInput, MuxingStream, StreamMode, ColorConfig
 from bitmovin_api_sdk import AacAudioConfiguration, AacChannelLayout
 from bitmovin_api_sdk import H264VideoConfiguration, CodecConfigType, ProfileH264, LevelH264, WeightedPredictionPFrames
@@ -17,20 +17,15 @@ from bitmovin_api_sdk import MessageType, StartLiveEncodingRequest, ManifestGene
 from bitmovin_api_sdk import LiveHlsManifest, LiveDashManifest, AvailabilityStartTimeMode
 from bitmovin_api_sdk import Status
 
-TEST_ITEM = "basic-live-h264-aac-fmp4-hls-dash"
+TEST_ITEM = "live-srt-ingest-h264-vbr-aac-fmp4-hls-dash-s3-role-based-output"
 
 API_KEY = '<INSERT YOUR API KEY>'
 ORG_ID = '<INSERT YOUR ORG ID>'
 
-S3_INPUT_ACCESS_KEY = '<INSERT_YOUR_ACCESS_KEY>'
-S3_INPUT_SECRET_KEY = '<INSERT_YOUR_SECRET_KEY>'
-S3_INPUT_BUCKET_NAME = '<INSERT_YOUR_BUCKET_NAME>'
-
-INPUT_PATH = '/path/to/your/input/file.mp4'  # 'inputs/big_buck_bunny_1080p_h264.mov'
-
-S3_OUTPUT_ACCESS_KEY = '<INSERT_YOUR_ACCESS_KEY>'
-S3_OUTPUT_SECRET_KEY = '<INSERT_YOUR_SECRET_KEY>'
+# Adjust these to your own S3 bucket name, IAM role ARN, and External ID.
 S3_OUTPUT_BUCKET_NAME = '<INSERT_YOUR_BUCKET_NAME>'
+S3_OUTPUT_ARN_ROLE = '<INSERT_YOUR_S3_ROLE_ARN>'
+S3_OUTPUT_EXTERNAL_ID = '<INSERT_YOUR_EXTERNAL_ID>'
 
 OUTPUT_BASE_PATH = f'output/{TEST_ITEM}/'
 
@@ -56,49 +51,28 @@ audio_encoding_profiles = [
 def main():
 
     # === Input and Output definition ===
-    rtmp_inputs = bitmovin_api.encoding.inputs.rtmp.list()
-    rtmp_input = rtmp_inputs.items[0]
-    s3_output = bitmovin_api.encoding.outputs.s3.create(
-        s3_output=S3Output(
-            access_key=S3_OUTPUT_ACCESS_KEY,
-            secret_key=S3_OUTPUT_SECRET_KEY,
+    srt_input = bitmovin_api.encoding.inputs.srt.create(
+        srt_input=SrtInput(
+            mode=SrtMode.LISTENER,
+            port=2088
+        )
+    )
+    s3_output = bitmovin_api.encoding.outputs.s3_role_based.create(
+        s3_role_based_output=S3RoleBasedOutput(
             bucket_name=S3_OUTPUT_BUCKET_NAME,
-            name='Test S3 Output'
+            role_arn=S3_OUTPUT_ARN_ROLE,
+            external_id=S3_OUTPUT_EXTERNAL_ID
         )
     )
 
     # === Encoding instance definition ===
     encoding = bitmovin_api.encoding.encodings.create(
         encoding=Encoding(
-            name="[{}] {}".format(TEST_ITEM, INPUT_PATH),
+            name="[{}] {}".format(TEST_ITEM, "Test"),
             cloud_region=CloudRegion.AWS_AP_NORTHEAST_1,
             encoder_version='STABLE'
         )
     )
-
-    # === Input Stream definition for video and audio ===
-    video_ingest_input_stream = bitmovin_api.encoding.encodings.input_streams.ingest.create(
-        encoding_id=encoding.id,
-        ingest_input_stream=IngestInputStream(
-            input_id=rtmp_input.id,
-            input_path="live",
-            selection_mode=StreamSelectionMode.VIDEO_RELATIVE,
-            position=0
-        )
-    )
-    audio_ingest_input_stream = bitmovin_api.encoding.encodings.input_streams.ingest.create(
-        encoding_id=encoding.id,
-        ingest_input_stream=IngestInputStream(
-            input_id=rtmp_input.id,
-            input_path="live",
-            selection_mode=StreamSelectionMode.AUDIO_RELATIVE,
-            position=0
-        )
-    )
-
-    # Wrap ingest input streams into a format that can be used by the Stream object.
-    video_input_stream = StreamInput(input_stream_id=video_ingest_input_stream.id)
-    audio_input_stream = StreamInput(input_stream_id=audio_ingest_input_stream.id)
 
     # === Video Profile definition ===
     for video_profile in video_encoding_profiles:
@@ -153,7 +127,7 @@ def main():
                 cabac=use_cabac,
                 adaptive_spatial_transform=adaptive_spatial_transform,
                 weighted_prediction_p_frames=weighted_prediction_p_frames,
-                preset_configuration=PresetConfiguration.LIVE_VERYLOW_LATENCY
+                preset_configuration=PresetConfiguration.LIVE_ULTRAHIGH_QUALITY
             )
         )
 
@@ -162,7 +136,10 @@ def main():
             encoding_id=encoding.id,
             stream=Stream(
                 codec_config_id=h264_codec.id,
-                input_streams=[video_input_stream],
+                input_streams=[StreamInput(
+                    input_id=srt_input.id,
+                    input_path="live",
+                    position=0)],
                 name=f"Stream H264 {video_profile.get('height')}p",
                 mode=video_profile.get('mode')
             )
@@ -210,7 +187,10 @@ def main():
             encoding_id=encoding.id,
             stream=Stream(
                 codec_config_id=aac_codec.id,
-                input_streams=[audio_input_stream],
+                input_streams=[StreamInput(
+                    input_id=srt_input.id,
+                    input_path="live",
+                    position=1)],
                 name=f"Stream AAC {audio_profile.get('bitrate')/1000:.0f}kbps",
                 mode=StreamMode.STANDARD
             )
@@ -265,7 +245,7 @@ def main():
     _execute_live_encoding(encoding=encoding, start_live_encoding_request=start_live_encoding_request)
     live_encoding = _wait_for_live_encoding_details(encoding=encoding)
 
-    print("Live encoding is up and ready for ingest. RTMP URL: rtmp://{0}/live StreamKey: {1}"
+    print("Live encoding is up and ready for ingest. SRT URL: SRT://{0}/(port) StreamKey: {1}"
           .format(live_encoding.encoder_ip, live_encoding.stream_key))
 
     input("Press Enter to shutdown the live encoding...")
