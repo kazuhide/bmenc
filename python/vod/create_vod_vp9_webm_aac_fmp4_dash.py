@@ -5,17 +5,16 @@ from bitmovin_api_sdk import S3Input, S3Output
 from bitmovin_api_sdk import Encoding, CloudRegion
 from bitmovin_api_sdk import EncodingOutput, AclEntry, AclPermission
 from bitmovin_api_sdk import IngestInputStream, StreamSelectionMode, PresetConfiguration
-from bitmovin_api_sdk import Stream, StreamInput, MuxingStream, StreamMode, ColorConfig, CodecConfigType
+from bitmovin_api_sdk import Stream, StreamInput, MuxingStream, StreamMode, ColorConfig
 from bitmovin_api_sdk import AacAudioConfiguration, AacChannelLayout
-from bitmovin_api_sdk import H265VideoConfiguration, ProfileH265
-from bitmovin_api_sdk import Fmp4Muxing
-from bitmovin_api_sdk import HlsManifest, HlsVersion, AudioMediaInfo, StreamInfo
+from bitmovin_api_sdk import Vp9VideoConfiguration, CodecConfigType
+from bitmovin_api_sdk import Fmp4Muxing, WebmMuxing
 from bitmovin_api_sdk import DashManifest, Period, VideoAdaptationSet, AudioAdaptationSet
-from bitmovin_api_sdk import DashFmp4Representation, DashRepresentationType, DashRepresentationTypeMode
+from bitmovin_api_sdk import DashFmp4Representation, DashWebmRepresentation, DashRepresentationType, DashRepresentationTypeMode
 from bitmovin_api_sdk import MessageType, StartEncodingRequest
 from bitmovin_api_sdk import Status
 
-TEST_ITEM = "basic-hevc-aac-fmp4-hls-dash"
+TEST_ITEM = "vod-vp9-webm-aac-fmp4-dash"
 
 API_KEY = '<INSERT YOUR API KEY>'
 ORG_ID = '<INSERT YOUR ORG ID>'
@@ -35,17 +34,17 @@ OUTPUT_BASE_PATH = f'output/{TEST_ITEM}/'
 
 bitmovin_api = BitmovinApi(api_key=API_KEY, tenant_org_id=ORG_ID)
 
-# Example H.265 (HEVC) encoding profiles with different resolutions and bitrates.
+# Example VP9 encoding profiles for video, defining different resolutions, bitrates, and encoding modes.
 video_encoding_profiles = [
-    dict(height=240,  bitrate=300000,  profile=ProfileH265.MAIN, level=None, mode=StreamMode.STANDARD),
-    dict(height=360,  bitrate=800000,  profile=ProfileH265.MAIN, level=None, mode=StreamMode.STANDARD),
-    dict(height=480,  bitrate=1200000, profile=ProfileH265.MAIN, level=None, mode=StreamMode.STANDARD),
-    dict(height=540,  bitrate=2000000, profile=ProfileH265.MAIN, level=None, mode=StreamMode.STANDARD),
-    dict(height=720,  bitrate=4000000, profile=ProfileH265.MAIN, level=None, mode=StreamMode.STANDARD),
-    dict(height=1080, bitrate=6000000, profile=ProfileH265.MAIN, level=None, mode=StreamMode.STANDARD),
+    dict(height=240,  bitrate=300000,  mode=StreamMode.STANDARD),
+    dict(height=360,  bitrate=800000,  mode=StreamMode.STANDARD),
+    dict(height=480,  bitrate=1200000, mode=StreamMode.STANDARD),
+    dict(height=540,  bitrate=2000000, mode=StreamMode.STANDARD),
+    dict(height=720,  bitrate=4000000, mode=StreamMode.STANDARD),
+    dict(height=1080, bitrate=6000000, mode=StreamMode.STANDARD)
 ]
 
-# Example AAC audio encoding profiles
+# Example AAC audio encoding profiles, each with a specified bitrate and sample rate.
 audio_encoding_profiles = [
     dict(bitrate=128000, rate=48000),
     dict(bitrate=64000,  rate=44100)
@@ -54,18 +53,19 @@ audio_encoding_profiles = [
 
 def main():
     """
-    Main function demonstrating a basic Bitmovin encoding workflow using H.265 (HEVC) video + AAC audio.
-    Steps:
-      1) Create S3 input/output
-      2) Create an Encoding object
-      3) Ingest video/audio streams
-      4) Create multiple H.265 streams (FMP4 muxing)
-      5) Create multiple AAC streams (FMP4 muxing)
-      6) Start the encoding
-      7) Generate HLS/DASH manifests
+    Main entry point for the encoding script.
+    This script demonstrates a Bitmovin encoding workflow using VP9 for video (muxed as WebM) and AAC for audio (muxed as FMP4).
+    The steps are:
+      1) Create S3 input/output resources.
+      2) Create an Encoding object.
+      3) Define video and audio input streams from the source file.
+      4) Create multiple VP9 video streams with advanced color configuration and corresponding WebM muxings for different resolutions.
+      5) Create multiple AAC audio streams with corresponding FMP4 muxings.
+      6) Start the encoding process and poll until completion.
+      7) Generate a DASH manifest for adaptive streaming.
     """
 
-    # 1) S3 Input/Output
+    # 1) Create S3 Input/Output resources
     s3_input = bitmovin_api.encoding.inputs.s3.create(
         s3_input=S3Input(
             access_key=S3_INPUT_ACCESS_KEY,
@@ -83,7 +83,7 @@ def main():
         )
     )
 
-    # 2) Create an Encoding object
+    # 2) Create the Encoding instance specifying cloud region and encoder version.
     encoding = bitmovin_api.encoding.encodings.create(
         encoding=Encoding(
             name=f"[{TEST_ITEM}] {INPUT_PATH}",
@@ -92,7 +92,7 @@ def main():
         )
     )
 
-    # 3) Define Video/Audio Ingest Input Streams
+    # 3) Define input streams for video and audio from the source file.
     video_ingest_input_stream = bitmovin_api.encoding.encodings.input_streams.ingest.create(
         encoding_id=encoding.id,
         ingest_input_stream=IngestInputStream(
@@ -115,38 +115,50 @@ def main():
     video_input_stream = StreamInput(input_stream_id=video_ingest_input_stream.id)
     audio_input_stream = StreamInput(input_stream_id=audio_ingest_input_stream.id)
 
-    # 4) Create H.265 Video Streams + Muxings
+    # 4) Create VP9 video streams and corresponding WebM muxings for adaptive streaming.
     for video_profile in video_encoding_profiles:
         color_config = ColorConfig(
             copy_color_primaries_flag=True,
             copy_color_transfer_flag=True,
             copy_color_space_flag=True
         )
+        # Adjust encoding parameters based on resolution.
+        if video_profile.get("height") <= 240:
+            cpu_used = 1
+            tile_columns = 0
+        elif video_profile.get("height") <= 480:
+            cpu_used = 1
+            tile_columns = 1
+        elif video_profile.get("height") <= 1080:
+            cpu_used = 2
+            tile_columns = 2
+        elif video_profile.get("height") <= 1440:
+            cpu_used = 2
+            tile_columns = 3
+        else:
+            cpu_used = 2
+            tile_columns = 4
 
-        h265_codec = bitmovin_api.encoding.configurations.video.h265.create(
-            h265_video_configuration=H265VideoConfiguration(
-                name='Sample H.265 Video Configuration',
+        vp9_codec = bitmovin_api.encoding.configurations.video.vp9.create(
+            vp9_video_configuration=Vp9VideoConfiguration(
+                name='Sample video codec configuration',
                 height=video_profile.get("height"),
                 bitrate=video_profile.get("bitrate"),
-                max_bitrate=int(video_profile.get("bitrate") * 1.2),
-                bufsize=int(video_profile.get("bitrate") * 1.5),
-                profile=video_profile.get("profile"),
-                level=video_profile.get("level"),
-                ref_frames=4,
-                bframes=3,
-                min_keyframe_interval=2,
                 max_keyframe_interval=2,
+                min_keyframe_interval=2,
                 color_config=color_config,
+                tile_columns=tile_columns,
+                cpu_used=cpu_used,
                 preset_configuration=PresetConfiguration.VOD_HIGH_QUALITY
             )
         )
 
-        h265_stream = bitmovin_api.encoding.encodings.streams.create(
+        vp9_stream = bitmovin_api.encoding.encodings.streams.create(
             encoding_id=encoding.id,
             stream=Stream(
-                codec_config_id=h265_codec.id,
+                codec_config_id=vp9_codec.id,
                 input_streams=[video_input_stream],
-                name=f"Stream H265 {video_profile.get('height')}p",
+                name=f"Stream VP9 {video_profile.get('height')}p",
                 mode=video_profile.get('mode')
             )
         )
@@ -157,19 +169,19 @@ def main():
             acl=[AclEntry(permission=AclPermission.PUBLIC_READ)]
         )
 
-        bitmovin_api.encoding.encodings.muxings.fmp4.create(
+        bitmovin_api.encoding.encodings.muxings.webm.create(
             encoding_id=encoding.id,
-            fmp4_muxing=Fmp4Muxing(
+            webm_muxing=WebmMuxing(
                 segment_length=6,
-                segment_naming='segment_%number%.m4s',
-                init_segment_name='init.mp4',
-                streams=[MuxingStream(stream_id=h265_stream.id)],
+                segment_naming='segment_%number%.chk',
+                init_segment_name='init.hdr',
+                streams=[MuxingStream(stream_id=vp9_stream.id)],
                 outputs=[video_muxing_output],
-                name=f"Video FMP4 Muxing {video_profile.get('height')}p"
+                name=f"Video WebM Muxing {video_profile.get('height')}p"
             )
         )
 
-    # 5) Create AAC Audio Streams + Muxings
+    # 5) Create AAC audio streams and corresponding FMP4 muxings.
     for audio_profile in audio_encoding_profiles:
         aac_codec = bitmovin_api.encoding.configurations.audio.aac.create(
             aac_audio_configuration=AacAudioConfiguration(
@@ -207,22 +219,20 @@ def main():
             )
         )
 
-    # 6) Start the encoding
+    # 6) Start the encoding process and wait until it finishes.
     start_encoding_request = StartEncodingRequest()
     _execute_encoding(encoding=encoding, start_encoding_request=start_encoding_request)
 
-    # 7) Create HLS/DASH manifests
-    hls_manifest = _create_hls_manifest(encoding_id=encoding.id, output=s3_output, output_path=OUTPUT_BASE_PATH)
+    # 7) Create a DASH manifest for adaptive streaming.
     dash_manifest = _create_dash_manifest(encoding_id=encoding.id, output=s3_output, output_path=OUTPUT_BASE_PATH)
 
-    # 8) Generate HLS and DASH
-    _execute_hls_manifest_generation(hls_manifest=hls_manifest)
+    # 8) Generate the DASH manifest and wait until completion.
     _execute_dash_manifest_generation(dash_manifest=dash_manifest)
 
 
 def _execute_encoding(encoding, start_encoding_request):
     """
-    Start the encoding and poll until it finishes or fails.
+    Start the encoding process on Bitmovin and poll until it finishes or fails.
     """
     bitmovin_api.encoding.encodings.start(encoding_id=encoding.id, start_encoding_request=start_encoding_request)
     task = _wait_for_encoding_to_finish(encoding_id=encoding.id)
@@ -237,72 +247,13 @@ def _execute_encoding(encoding, start_encoding_request):
     print("Encoding finished successfully")
 
 
-def _create_hls_manifest(encoding_id, output, output_path):
-    """
-    Create an HLS manifest from the generated FMP4 muxings.
-    """
-    manifest_output = EncodingOutput(
-        output_id=output.id,
-        output_path=output_path,
-        acl=[AclEntry(permission=AclPermission.PUBLIC_READ)]
-    )
-
-    hls_manifest = bitmovin_api.encoding.manifests.hls.create(
-        hls_manifest=HlsManifest(
-            manifest_name='stream.m3u8',
-            outputs=[manifest_output],
-            name='HLS Manifest',
-            hls_master_playlist_version=HlsVersion.HLS_V4,
-            hls_media_playlist_version=HlsVersion.HLS_V4
-        )
-    )
-
-    fmp4_muxings = bitmovin_api.encoding.encodings.muxings.fmp4.list(encoding_id=encoding_id)
-    for muxing in fmp4_muxings.items:
-        stream = bitmovin_api.encoding.encodings.streams.get(encoding_id=encoding_id, stream_id=muxing.streams[0].stream_id)
-        if 'PER_TITLE_TEMPLATE' in stream.mode.value:
-            continue
-
-        codec_type = bitmovin_api.encoding.configurations.type.get(configuration_id=stream.codec_config_id)
-        segment_path = _remove_output_base_path(muxing.outputs[0].output_path)
-
-        if codec_type.type == CodecConfigType.AAC:
-            audio_codec = bitmovin_api.encoding.configurations.audio.aac.get(configuration_id=stream.codec_config_id)
-            bitmovin_api.encoding.manifests.hls.media.audio.create(
-                manifest_id=hls_manifest.id,
-                audio_media_info=AudioMediaInfo(
-                    name='HLS Audio Media',
-                    group_id='audio',
-                    language='en',
-                    segment_path=segment_path,
-                    encoding_id=encoding_id,
-                    stream_id=stream.id,
-                    muxing_id=muxing.id,
-                    uri=f'audio_{audio_codec.bitrate}.m3u8'
-                )
-            )
-        elif codec_type.type == CodecConfigType.H265:
-            video_codec = bitmovin_api.encoding.configurations.video.h265.get(configuration_id=stream.codec_config_id)
-            bitmovin_api.encoding.manifests.hls.streams.create(
-                manifest_id=hls_manifest.id,
-                stream_info=StreamInfo(
-                    audio='audio',
-                    closed_captions='NONE',
-                    segment_path=segment_path,
-                    uri=f'video_{video_codec.bitrate}.m3u8',
-                    encoding_id=encoding_id,
-                    stream_id=stream.id,
-                    muxing_id=muxing.id
-                )
-            )
-
-    return hls_manifest
-
-
 def _create_dash_manifest(encoding_id, output, output_path):
     """
-    Create a DASH manifest by building a Period, adding Video/Audio Adaptation Sets,
-    and attaching each FMP4 representation.
+    Create a DASH manifest by:
+      - Defining the manifest output.
+      - Creating a Period.
+      - Adding Video and Audio Adaptation Sets.
+      - Attaching a WebM representation for VP9 video and an FMP4 representation for AAC audio.
     """
     manifest_output = EncodingOutput(
         output_id=output.id,
@@ -334,16 +285,39 @@ def _create_dash_manifest(encoding_id, output, output_path):
         period_id=period.id
     )
 
-    fmp4_muxings = bitmovin_api.encoding.encodings.muxings.fmp4.list(encoding_id=encoding_id)
-    for muxing in fmp4_muxings.items:
-        stream = bitmovin_api.encoding.encodings.streams.get(encoding_id=encoding_id, stream_id=muxing.streams[0].stream_id)
+    # Attach WebM representations for VP9 video muxings.
+    webm_muxings = bitmovin_api.encoding.encodings.muxings.webm.list(encoding_id=encoding_id)
+    for muxing in webm_muxings.items:
+        stream = bitmovin_api.encoding.encodings.streams.get(encoding_id=encoding_id,
+                                                             stream_id=muxing.streams[0].stream_id)
         if 'PER_TITLE_TEMPLATE' in stream.mode.value:
             continue
 
-        codec_type = bitmovin_api.encoding.configurations.type.get(configuration_id=stream.codec_config_id)
+        codec = bitmovin_api.encoding.configurations.type.get(configuration_id=stream.codec_config_id)
         segment_path = _remove_output_base_path(muxing.outputs[0].output_path)
 
-        if codec_type.type == CodecConfigType.AAC:
+        if codec.type == CodecConfigType.VP9:
+            bitmovin_api.encoding.manifests.dash.periods.adaptationsets.representations.webm.create(
+                manifest_id=dash_manifest.id,
+                period_id=period.id,
+                adaptationset_id=video_adaptation_set.id,
+                dash_webm_representation=DashWebmRepresentation(
+                    encoding_id=encoding_id,
+                    muxing_id=muxing.id,
+                    type_=DashRepresentationType.TEMPLATE,
+                    mode=DashRepresentationTypeMode.TEMPLATE_REPRESENTATION,
+                    segment_path=segment_path
+                )
+            )
+
+    # Attach FMP4 representations for AAC audio muxings.
+    fmp4_muxings = bitmovin_api.encoding.encodings.muxings.fmp4.list(encoding_id=encoding_id)
+    for muxing in fmp4_muxings.items:
+        stream = bitmovin_api.encoding.encodings.streams.get(encoding_id=encoding_id, stream_id=muxing.streams[0].stream_id)
+        codec = bitmovin_api.encoding.configurations.type.get(configuration_id=stream.codec_config_id)
+        segment_path = _remove_output_base_path(muxing.outputs[0].output_path)
+
+        if codec.type == CodecConfigType.AAC:
             bitmovin_api.encoding.manifests.dash.periods.adaptationsets.representations.fmp4.create(
                 manifest_id=dash_manifest.id,
                 period_id=period.id,
@@ -356,43 +330,13 @@ def _create_dash_manifest(encoding_id, output, output_path):
                     segment_path=segment_path
                 )
             )
-        elif codec_type.type == CodecConfigType.H265:
-            bitmovin_api.encoding.manifests.dash.periods.adaptationsets.representations.fmp4.create(
-                manifest_id=dash_manifest.id,
-                period_id=period.id,
-                adaptationset_id=video_adaptation_set.id,
-                dash_fmp4_representation=DashFmp4Representation(
-                    encoding_id=encoding_id,
-                    muxing_id=muxing.id,
-                    type_=DashRepresentationType.TEMPLATE,
-                    mode=DashRepresentationTypeMode.TEMPLATE_REPRESENTATION,
-                    segment_path=segment_path
-                )
-            )
 
     return dash_manifest
 
 
-def _execute_hls_manifest_generation(hls_manifest):
-    """
-    Start the HLS manifest creation process and poll until finished or fails.
-    """
-    bitmovin_api.encoding.manifests.hls.start(manifest_id=hls_manifest.id)
-    task = _wait_for_hls_manifest_to_finish(manifest_id=hls_manifest.id)
-
-    while task.status not in [Status.FINISHED, Status.ERROR]:
-        task = _wait_for_hls_manifest_to_finish(manifest_id=hls_manifest.id)
-
-    if task.status == Status.ERROR:
-        _log_task_errors(task)
-        raise Exception("HLS Manifest creation failed")
-
-    print("HLS Manifest creation finished successfully")
-
-
 def _execute_dash_manifest_generation(dash_manifest):
     """
-    Start the DASH manifest creation process and poll until finished or fails.
+    Start DASH manifest generation and poll until completed or fails.
     """
     bitmovin_api.encoding.manifests.dash.start(manifest_id=dash_manifest.id)
     task = _wait_for_dash_manifest_to_finish(manifest_id=dash_manifest.id)
@@ -409,7 +353,7 @@ def _execute_dash_manifest_generation(dash_manifest):
 
 def _wait_for_encoding_to_finish(encoding_id):
     """
-    Poll the encoding status every 5 seconds until it's finished or fails.
+    Poll encoding status every 5 seconds until finished or an error occurs.
     """
     time.sleep(5)
     task = bitmovin_api.encoding.encodings.status(encoding_id=encoding_id)
@@ -417,19 +361,9 @@ def _wait_for_encoding_to_finish(encoding_id):
     return task
 
 
-def _wait_for_hls_manifest_to_finish(manifest_id):
-    """
-    Poll the HLS manifest creation status every 5 seconds until it's finished or fails.
-    """
-    time.sleep(5)
-    task = bitmovin_api.encoding.manifests.hls.status(manifest_id=manifest_id)
-    print(f"HLS manifest status is {task.status} (progress: {task.progress} %)")
-    return task
-
-
 def _wait_for_dash_manifest_to_finish(manifest_id):
     """
-    Poll the DASH manifest creation status every 5 seconds until it's finished or fails.
+    Poll DASH manifest creation status every 5 seconds until finished or an error occurs.
     """
     time.sleep(5)
     task = bitmovin_api.encoding.manifests.dash.status(manifest_id=manifest_id)
@@ -448,10 +382,11 @@ def _remove_output_base_path(text):
 
 def _log_task_errors(task):
     """
-    Log error messages from the given task.
+    Print error messages from the given task to the console.
     """
     if not task:
         return
+
     for message in filter(lambda m: m.type == MessageType.ERROR, task.messages):
         print(message.text)
 
