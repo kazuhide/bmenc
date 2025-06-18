@@ -106,13 +106,13 @@ DASHでは `Label` 要素を使用して、各 `AdaptationSet` に言語やト�
 ```python
 # 主音声用のAdaptationSet
 AudioAdaptationSet(
-    lang='ja',
+    lang='en',
     labels=[Label(value='主音声')]
 )
 
 # 副音声用のAdaptationSet
 AudioAdaptationSet(
-    lang='ja',
+    lang='en',
     labels=[Label(value='副音声')]
 )
 ```
@@ -135,7 +135,7 @@ AudioAdaptationSet(
 3. スクリプトを実行
 
 ```bash
-python test_create_multi_audio_h264_aac_ddp_fmp4_hls_dash.py
+python create_multi_audio_h264_aac_ddp_fmp4_hls_dash.py
 ```
 
 ## テストファイルについて
