@@ -4,7 +4,15 @@
 
 ## 概要
 
-`create_multi_audio_h264_aac_ddp_fmp4_hls_dash.py` は、以下の処理を行います：
+このディレクトリには2つのマルチオーディオエンコーディングサンプルが含まれています：
+
+### 1. `create_multi_audio_h264_aac_fmp4_hls_dash.py`
+FMP4形式でHLS/DASHの両方を生成します。モダンなプレイヤーに最適です。
+
+### 2. `create_multi_audio_h264_aac_ts_hls_fmp4_dash.py`
+HLSはTS形式、DASHはFMP4形式で生成します。レガシーデバイスとの互換性が必要な場合に使用します。
+
+両スクリプトとも以下の処理を行います：
 
 1. 2つの入力ファイルから映像と音声を抽出
    - `INPUT_PATH_1`: メイン動画 + 主音声
@@ -135,7 +143,11 @@ AudioAdaptationSet(
 3. スクリプトを実行
 
 ```bash
-python create_multi_audio_h264_aac_ddp_fmp4_hls_dash.py
+# FMP4形式のHLS/DASH
+python create_multi_audio_h264_aac_fmp4_hls_dash.py
+
+# TS形式のHLS + FMP4形式のDASH
+python create_multi_audio_h264_aac_ts_hls_fmp4_dash.py
 ```
 
 ## テストファイルについて
@@ -159,6 +171,7 @@ ffmpeg -i test5.mkv -map 0:v -map 0:a:1 -c copy test5_commentary.mkv
 
 ## 出力構造
 
+### FMP4形式（create_multi_audio_h264_aac_fmp4_hls_dash.py）
 ```
 output/
 ├── video/           # 映像セグメント
@@ -176,8 +189,32 @@ output/
 └── stream.mpd       # DASHマニフェスト
 ```
 
+### TS/FMP4混在形式（create_multi_audio_h264_aac_ts_hls_fmp4_dash.py）
+```
+output/
+├── video/
+│   ├── fmp4/        # DASH用映像セグメント（FMP4）
+│   │   ├── 240p/
+│   │   ├── 360p/
+│   │   └── ...
+│   └── ts/          # HLS用映像セグメント（TS）
+│       ├── 240p/
+│       ├── 360p/
+│       └── ...
+├── audio/
+│   ├── fmp4/        # DASH用音声セグメント（FMP4）
+│   │   ├── main/
+│   │   └── commentary/
+│   └── ts/          # HLS用音声セグメント（TS）
+│       ├── main/
+│       └── commentary/
+├── stream.m3u8      # HLSマスタープレイリスト（TSセグメント参照）
+└── stream.mpd       # DASHマニフェスト（FMP4セグメント参照）
+```
+
 ## 注意事項
 
 - 音声トラックの言語設定は配信コンテンツに合わせて適切に設定してください
 - プレイヤーの互換性を考慮し、`DEFAULT` と `AUTOSELECT` （または `FORCED`）の組み合わせを検討してください
 - 異なる仕様の音声を追加する場合は、適切なグループIDの分離を行ってください
+- TS/FMP4混在形式ではストレージ使用量が約2倍になることに注意してください
